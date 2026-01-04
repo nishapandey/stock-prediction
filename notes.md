@@ -1,9 +1,9 @@
 
 Notes:
-activate virtual env 
+activate virtual env: 
 source venv/bin/activate
 
-react commands
+react commands:
 
 npm create vite@latest
 
@@ -23,7 +23,7 @@ python manage.py runserver
 
 python manage.py migrate
 
- python manage.py  startapp accounts
+python manage.py  startapp accounts
 
 
 

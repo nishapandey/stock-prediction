@@ -30,3 +30,6 @@ python manage.py  startapp accounts
 django apps flow
 
 model > serialization > views > urls 
+
+http://127.0.0.1:8000/api/v1/register/
+http://localhost:5173/register

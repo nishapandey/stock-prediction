@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Container, Row, Col } from 'react-bootstrap'
 import 'bootstrap/dist/css/bootstrap.min.css'
 import './App.css'
@@ -9,13 +8,13 @@ import Footer from './components/Footer'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Register from './components/Register'  
 import Login from './components/Login'
-function App() {
-  const [count, setCount] = useState(0)
+import AuthProvider from './components/AuthProvider'
 
+function App() {
   return (
-    <>
+    <AuthProvider>
       <BrowserRouter>
-      <Header />
+        <Header />
         <Routes>
           <Route path='/' element={<Main />} />
           <Route path='/register' element={<Register />} />
@@ -23,8 +22,7 @@ function App() {
         </Routes>
         <Footer />
       </BrowserRouter>
-      
-    </>
+    </AuthProvider>
   )
 }
 

@@ -35,3 +35,7 @@ http://127.0.0.1:8000/api/v1/register/
 http://localhost:5173/register
 
 curl   -X POST   -H "Content-Type: application/json"   -d '{"username": "test123", "password": "test123"}'   http://localhost:8000/api/v1/token/
+
+http://127.0.0.1:8000/api/v1/token/
+
+

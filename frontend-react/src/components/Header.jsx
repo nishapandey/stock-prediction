@@ -22,6 +22,8 @@ function Header() {
         {isLoggedIn ? (
           <div className='navbar-text'>
             <button className='btn btn-info' onClick={handleLogout}>Logout</button>
+            &nbsp; &nbsp;
+            <Link to='/dashboard' className='btn btn-info'>Dashboard</Link>
           </div>
         ) : (
           <div className='navbar-text'>

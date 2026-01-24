@@ -1,21 +1,19 @@
 import React from 'react'
 import { useState, useContext } from 'react'
-import axios from 'axios'
 import { Spinner } from 'react-bootstrap'
 import { useNavigate } from 'react-router-dom'
 import { AuthContext } from './AuthProvider'
-
+import { axiosInstance } from '../axiosinstance'
 const Login = () => {
   const [formData, setFormData] = useState({
     username: '',
     password: ''
   })
-  const API_URL = 'http://127.0.0.1:8000/api/v1/'
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
   const [error, setError] = useState('')
-  const {isLoggedIn, setIsLoggedIn} = useContext(AuthContext)
+  const {setIsLoggedIn} = useContext(AuthContext)
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.id]: e.target.value })
   }
@@ -23,11 +21,11 @@ const Login = () => {
     e.preventDefault()
     setLoading(true)
     try{
-      const response = await axios.post(`${API_URL}token/`, formData)
+      const response = await axiosInstance.post('/token/', formData)
       localStorage.setItem('access_token', response.data.access)
       localStorage.setItem('refresh_token', response.data.refresh)
       setIsLoggedIn(true)
-      navigate('/') 
+      navigate('/dashboard') 
       
     }catch(err){
       setError(err.response.data.detail)

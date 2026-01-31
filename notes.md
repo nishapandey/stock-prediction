@@ -39,3 +39,12 @@ curl   -X POST   -H "Content-Type: application/json"   -d '{"username": "test123
 http://127.0.0.1:8000/api/v1/token/
 
 
+conda basic commands
+conda create --name env1
+conda activate env1
+conda init bash / zsh
+conda --version
+conda env list
+conda deactivate
+
+conda install matplotlib  numpy pandas

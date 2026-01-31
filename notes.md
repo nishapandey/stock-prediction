@@ -48,3 +48,4 @@ conda env list
 conda deactivate
 
 conda install matplotlib  numpy pandas
+

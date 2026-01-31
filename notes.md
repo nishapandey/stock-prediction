@@ -47,5 +47,9 @@ conda --version
 conda env list
 conda deactivate
 
-conda install matplotlib  numpy pandas
+conda install matplotlib  numpy pandas scikit-learn keras tensorflow
+ conda install scikit-learn keras
+
+pip install yfinance
+
 

@@ -51,5 +51,10 @@ conda install matplotlib  numpy pandas scikit-learn keras tensorflow
  conda install scikit-learn keras
 
 pip install yfinance
+******************************tensorflow issue fix*****************
+conda create -n tfenv python=3.11
+conda activate tfenv
+pip install tensorflow
+pip install numpy pandas matplotlib scikit-learn yfinance jupyter keras
 
 

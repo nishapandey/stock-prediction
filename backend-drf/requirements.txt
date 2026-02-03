@@ -1,0 +1,13 @@
+django>=4.0
+djangorestframework
+django-cors-headers
+python-decouple
+yfinance
+numpy
+pandas
+matplotlib
+scikit-learn
+keras
+tensorflow
+vaderSentiment
+requests

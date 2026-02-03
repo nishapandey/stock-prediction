@@ -13,6 +13,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from keras.models import load_model
 from .serializers import StockPredictionSerializer
 from .utils import save_plot
+from .sentiment import get_sentiment_summary
 
 # Configure yfinance cache to a writable location
 cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.yf_cache')
@@ -43,8 +44,10 @@ class StockPredictionAPIView(APIView):
                         'status': status.HTTP_500_INTERNAL_SERVER_ERROR
                     })
                 
-                # Extract only Close prices and drop NaN values
-                df = df[['Close']].dropna()
+                # Extract Close prices and Volume, drop NaN values
+                df_full = df[['Close', 'Volume']].dropna()
+                volume_data = df_full['Volume'].values
+                df = df_full[['Close']]
                 
                 # Calculate moving averages
                 ma100 = df['Close'].rolling(100).mean()
@@ -127,6 +130,16 @@ class StockPredictionAPIView(APIView):
                 rmse = np.sqrt(mse)
                 r2 = r2_score(y_test, y_predicted)
 
+                # Get today's closing price for comparison
+                today_price = df['Close'].iloc[-1]
+                
+                # Get sentiment analysis BEFORE prediction to use in adjustment
+                sentiment_data = get_sentiment_summary(
+                    ticker, 
+                    df['Close'].values, 
+                    volume_data
+                )
+                
                 # Predict tomorrow's price using the last 100 days
                 # Use a scaler fit on recent data to avoid scale mismatch
                 last_100_days = df['Close'].tail(100).values.reshape(-1, 1)
@@ -135,10 +148,64 @@ class StockPredictionAPIView(APIView):
                 last_100_scaled = tomorrow_scaler.transform(last_100_days)
                 x_tomorrow = np.array([last_100_scaled.flatten()]).reshape(1, 100, 1)
                 tomorrow_prediction_scaled = model.predict(x_tomorrow)
-                tomorrow_prediction = tomorrow_scaler.inverse_transform(tomorrow_prediction_scaled)[0][0]
+                base_prediction = tomorrow_scaler.inverse_transform(tomorrow_prediction_scaled)[0][0]
                 
-                # Get today's closing price for comparison
-                today_price = df['Close'].iloc[-1]
+                # Apply sentiment adjustment to the prediction
+                # Overall sentiment score ranges from -1 (very bearish) to +1 (very bullish)
+                overall_sentiment = sentiment_data.get('overall_sentiment', 'neutral')
+                sentiment_score = sentiment_data.get('sentiment_score', 0)
+                
+                # Calculate base price change predicted by LSTM
+                base_change_pct = ((base_prediction - today_price) / today_price) * 100
+                
+                # Check for contradiction: LSTM vs Sentiment
+                # If sentiment strongly contradicts LSTM prediction, apply correction
+                sentiment_adjustment = 0.0
+                
+                # Strong contradiction detection
+                lstm_bullish = base_change_pct > 2  # LSTM predicts >2% increase
+                lstm_bearish = base_change_pct < -2  # LSTM predicts >2% decrease
+                sentiment_bullish = overall_sentiment == 'bullish' and sentiment_score > 0.2
+                sentiment_bearish = overall_sentiment == 'bearish' and sentiment_score < -0.2
+                
+                if lstm_bullish and sentiment_bearish:
+                    # LSTM says up, but sentiment is bearish - dampen the prediction
+                    # The more bearish, the more we reduce the predicted gain
+                    dampening_factor = 0.3 + (0.7 * (1 + sentiment_score))  # 0.3 to 1.0
+                    adjusted_change = base_change_pct * dampening_factor
+                    tomorrow_prediction = today_price * (1 + adjusted_change / 100)
+                    sentiment_adjustment = (adjusted_change - base_change_pct) / 100
+                    
+                elif lstm_bearish and sentiment_bullish:
+                    # LSTM says down, but sentiment is bullish - dampen the decline
+                    dampening_factor = 0.3 + (0.7 * (1 - sentiment_score))  # 0.3 to 1.0
+                    adjusted_change = base_change_pct * dampening_factor
+                    tomorrow_prediction = today_price * (1 + adjusted_change / 100)
+                    sentiment_adjustment = (adjusted_change - base_change_pct) / 100
+                    
+                else:
+                    # No strong contradiction - apply normal sentiment adjustment
+                    # RSI contribution
+                    rsi = sentiment_data.get('rsi')
+                    if rsi is not None:
+                        if rsi > 70:  # Overbought
+                            sentiment_adjustment -= 0.02 * ((rsi - 70) / 30)
+                        elif rsi < 30:  # Oversold
+                            sentiment_adjustment += 0.02 * ((30 - rsi) / 30)
+                    
+                    # News sentiment contribution
+                    news_score = sentiment_data.get('news_sentiment')
+                    if news_score is not None:
+                        sentiment_adjustment += news_score * 0.02
+                    
+                    # Overall sentiment contribution
+                    sentiment_adjustment += sentiment_score * 0.03
+                    
+                    # Apply adjustment
+                    tomorrow_prediction = base_prediction * (1 + sentiment_adjustment)
+                
+                # Store adjustment info for transparency
+                adjustment_pct = ((tomorrow_prediction - base_prediction) / base_prediction) * 100
                 
                 # Generate prediction summary
                 summary_points = []
@@ -179,6 +246,57 @@ class StockPredictionAPIView(APIView):
                     summary_points.append("Golden Cross pattern: 100 DMA is above 200 DMA, typically bullish.")
                 else:
                     summary_points.append("Death Cross pattern: 100 DMA is below 200 DMA, typically bearish.")
+                
+                # 6. Sentiment-adjusted prediction explanation
+                lstm_bullish = base_change_pct > 2
+                lstm_bearish = base_change_pct < -2
+                sentiment_bullish = overall_sentiment == 'bullish' and sentiment_score > 0.2
+                sentiment_bearish = overall_sentiment == 'bearish' and sentiment_score < -0.2
+                
+                if lstm_bullish and sentiment_bearish:
+                    summary_points.append(f"⚠️ CONFLICT: LSTM predicted +{base_change_pct:.1f}% but sentiment is BEARISH. Prediction dampened to reflect market caution.")
+                elif lstm_bearish and sentiment_bullish:
+                    summary_points.append(f"⚠️ CONFLICT: LSTM predicted {base_change_pct:.1f}% but sentiment is BULLISH. Decline dampened due to positive sentiment.")
+                elif abs(adjustment_pct) > 0.1:
+                    direction = "increased" if adjustment_pct > 0 else "decreased"
+                    summary_points.append(f"Sentiment analysis {direction} the base prediction by {abs(adjustment_pct):.2f}% (${base_prediction:.2f} → ${tomorrow_prediction:.2f}).")
+                
+                # Add sentiment insights to summary
+                if sentiment_data['rsi'] is not None:
+                    rsi = sentiment_data['rsi']
+                    if sentiment_data['rsi_signal'] == 'overbought':
+                        summary_points.append(f"RSI is {rsi} (overbought) - stock may be overvalued, potential bearish reversal.")
+                    elif sentiment_data['rsi_signal'] == 'oversold':
+                        summary_points.append(f"RSI is {rsi} (oversold) - stock may be undervalued, potential bullish reversal.")
+                    elif sentiment_data['rsi_signal'] == 'bullish':
+                        summary_points.append(f"RSI is {rsi} - showing bullish momentum.")
+                    else:
+                        summary_points.append(f"RSI is {rsi} - showing bearish momentum.")
+                
+                if sentiment_data['volume_analysis']:
+                    vol = sentiment_data['volume_analysis']
+                    if vol['signal'] == 'high':
+                        summary_points.append(f"Trading volume is {vol['ratio']}x above average - strong market interest.")
+                    elif vol['signal'] == 'low':
+                        summary_points.append(f"Trading volume is below average - weak market participation.")
+                
+                if sentiment_data['news_sentiment'] is not None:
+                    news_score = sentiment_data['news_sentiment']
+                    if news_score > 0.1:
+                        summary_points.append(f"News sentiment is positive ({news_score}) - bullish media coverage.")
+                    elif news_score < -0.1:
+                        summary_points.append(f"News sentiment is negative ({news_score}) - bearish media coverage.")
+                    else:
+                        summary_points.append(f"News sentiment is neutral ({news_score}).")
+                
+                if sentiment_data['fear_greed']:
+                    fg = sentiment_data['fear_greed']
+                    summary_points.append(f"Market Fear & Greed Index: {fg['value']} ({fg['classification']}).")
+                
+                # Overall sentiment conclusion
+                overall = sentiment_data['overall_sentiment']
+                score = sentiment_data['sentiment_score']
+                summary_points.append(f"Overall market sentiment: {overall.upper()} (score: {score}).")
 
                 return Response({
                     'status': 'success',
@@ -190,8 +308,11 @@ class StockPredictionAPIView(APIView):
                     'rmse': round(rmse, 4),
                     'r2': round(r2, 4),
                     'tomorrow_prediction': round(float(tomorrow_prediction), 2),
+                    'base_prediction': round(float(base_prediction), 2),
+                    'sentiment_adjustment_pct': round(adjustment_pct, 2),
                     'today_price': round(float(today_price), 2),
-                    'prediction_summary': summary_points
+                    'prediction_summary': summary_points,
+                    'sentiment': sentiment_data
                 })
                 
             except Exception as e:

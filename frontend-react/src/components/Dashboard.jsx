@@ -29,8 +29,11 @@ import { faSpinner } from '@fortawesome/free-solid-svg-icons'
   const [rmse, setRMSE] = useState()
   const [r2, setR2] = useState()
   const [tomorrowPrice, setTomorrowPrice] = useState()
+  const [basePrediction, setBasePrediction] = useState()
+  const [sentimentAdjustment, setSentimentAdjustment] = useState(0)
   const [todayPrice, setTodayPrice] = useState()
   const [summary, setSummary] = useState([])
+  const [sentiment, setSentiment] = useState(null)
 
   useEffect(()=>{
       const fetchProtectedData = async () =>{
@@ -60,8 +63,11 @@ import { faSpinner } from '@fortawesome/free-solid-svg-icons'
           setRMSE(response.data.rmse)
           setR2(response.data.r2)
           setTomorrowPrice(response.data.tomorrow_prediction)
+          setBasePrediction(response.data.base_prediction)
+          setSentimentAdjustment(response.data.sentiment_adjustment_pct || 0)
           setTodayPrice(response.data.today_price)
           setSummary(response.data.prediction_summary || [])
+          setSentiment(response.data.sentiment || null)
           // Set plots
           if(response.data.error){
               setError(response.data.error)
@@ -97,16 +103,139 @@ return (
                   <div className="card bg-dark text-light mb-4">
                       <div className="card-body text-center">
                           <h3 className="card-title">Tomorrow's Predicted Price</h3>
+                          <p className="text-muted small mb-1">Sentiment-Adjusted Prediction</p>
                           <h1 className={`display-4 ${tomorrowPrice > todayPrice ? 'text-success' : 'text-danger'}`}>
                               ${tomorrowPrice}
                           </h1>
-                          <p className="mb-0">
+                          <p className="mb-2">
                               Today's Price: <strong>${todayPrice}</strong>
                               <span className={`ms-2 ${tomorrowPrice > todayPrice ? 'text-success' : 'text-danger'}`}>
                                   ({tomorrowPrice > todayPrice ? '▲' : '▼'} 
                                   {Math.abs(((tomorrowPrice - todayPrice) / todayPrice) * 100).toFixed(2)}%)
                               </span>
                           </p>
+                          
+                          {/* Sentiment Adjustment Breakdown */}
+                          {basePrediction && (
+                              <div className="mt-3 pt-3 border-top border-secondary">
+                                  <div className="row align-items-center">
+                                      <div className="col-4">
+                                          <small className="text-muted">LSTM Model</small>
+                                          <p className="mb-0 fs-5">${basePrediction}</p>
+                                      </div>
+                                      <div className="col-4">
+                                          <small className="text-muted">Sentiment Adj.</small>
+                                          <p className={`mb-0 fs-5 ${sentimentAdjustment > 0 ? 'text-success' : sentimentAdjustment < 0 ? 'text-danger' : ''}`}>
+                                              {sentimentAdjustment > 0 ? '+' : ''}{sentimentAdjustment}%
+                                          </p>
+                                      </div>
+                                      <div className="col-4">
+                                          <small className="text-muted">Final Price</small>
+                                          <p className={`mb-0 fs-5 fw-bold ${tomorrowPrice > todayPrice ? 'text-success' : 'text-danger'}`}>
+                                              ${tomorrowPrice}
+                                          </p>
+                                      </div>
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+              )}
+
+              {/* Sentiment Overview Card */}
+              {sentiment && (
+                  <div className="card bg-dark text-light mb-4">
+                      <div className="card-body">
+                          <h5 className="card-title mb-3">Market Sentiment Analysis</h5>
+                          <div className="row">
+                              {/* Overall Sentiment */}
+                              <div className="col-md-4 text-center mb-3">
+                                  <h6>Overall Sentiment</h6>
+                                  <span className={`badge fs-5 ${
+                                      sentiment.overall_sentiment === 'bullish' ? 'bg-success' : 
+                                      sentiment.overall_sentiment === 'bearish' ? 'bg-danger' : 'bg-warning'
+                                  }`}>
+                                      {sentiment.overall_sentiment?.toUpperCase()}
+                                  </span>
+                                  <p className="mt-2 mb-0">Score: {sentiment.sentiment_score}</p>
+                              </div>
+                              
+                              {/* RSI */}
+                              <div className="col-md-4 text-center mb-3">
+                                  <h6>RSI (14)</h6>
+                                  <span className={`fs-4 ${
+                                      sentiment.rsi > 70 ? 'text-danger' : 
+                                      sentiment.rsi < 30 ? 'text-success' : 'text-warning'
+                                  }`}>
+                                      {sentiment.rsi || 'N/A'}
+                                  </span>
+                                  <p className="mt-2 mb-0 small">
+                                      {sentiment.rsi_signal === 'overbought' ? '⚠️ Overbought' :
+                                       sentiment.rsi_signal === 'oversold' ? '📈 Oversold' :
+                                       sentiment.rsi_signal === 'bullish' ? '↑ Bullish' : '↓ Bearish'}
+                                  </p>
+                              </div>
+                              
+                              {/* Fear & Greed */}
+                              {sentiment.fear_greed && (
+                                  <div className="col-md-4 text-center mb-3">
+                                      <h6>Fear & Greed Index</h6>
+                                      <span className={`fs-4 ${
+                                          sentiment.fear_greed.value > 60 ? 'text-success' : 
+                                          sentiment.fear_greed.value < 40 ? 'text-danger' : 'text-warning'
+                                      }`}>
+                                          {sentiment.fear_greed.value}
+                                      </span>
+                                      <p className="mt-2 mb-0 small">{sentiment.fear_greed.classification}</p>
+                                  </div>
+                              )}
+                          </div>
+                          
+                          {/* Volume Analysis */}
+                          {sentiment.volume_analysis && (
+                              <div className="mt-3 pt-3 border-top border-secondary">
+                                  <h6>Volume Analysis</h6>
+                                  <p className="mb-0">
+                                      Recent volume is <strong>{sentiment.volume_analysis.ratio}x</strong> the 20-day average
+                                      <span className={`ms-2 badge ${
+                                          sentiment.volume_analysis.signal === 'high' ? 'bg-info' : 
+                                          sentiment.volume_analysis.signal === 'low' ? 'bg-secondary' : 'bg-warning'
+                                      }`}>
+                                          {sentiment.volume_analysis.signal}
+                                      </span>
+                                  </p>
+                              </div>
+                          )}
+                          
+                          {/* News Headlines */}
+                          {sentiment.news_headlines && sentiment.news_headlines.length > 0 && (
+                              <div className="mt-3 pt-3 border-top border-secondary">
+                                  <h6>Recent News Sentiment 
+                                      {sentiment.news_sentiment !== null && (
+                                          <span className={`ms-2 badge ${
+                                              sentiment.news_sentiment > 0.1 ? 'bg-success' : 
+                                              sentiment.news_sentiment < -0.1 ? 'bg-danger' : 'bg-warning'
+                                          }`}>
+                                              {sentiment.news_sentiment > 0 ? '+' : ''}{sentiment.news_sentiment}
+                                          </span>
+                                      )}
+                                  </h6>
+                                  <ul className="list-unstyled mb-0 small">
+                                      {sentiment.news_headlines.slice(0, 3).map((news, idx) => (
+                                          <li key={idx} className="mb-1">
+                                              <span className={
+                                                  news.sentiment === 'positive' ? 'text-success' :
+                                                  news.sentiment === 'negative' ? 'text-danger' : 'text-muted'
+                                              }>
+                                                  {news.sentiment === 'positive' ? '📈' : 
+                                                   news.sentiment === 'negative' ? '📉' : '•'}
+                                              </span>
+                                              {' '}{news.title}
+                                          </li>
+                                      ))}
+                                  </ul>
+                              </div>
+                          )}
                       </div>
                   </div>
               )}
@@ -119,9 +248,9 @@ return (
                           <ul className="mb-0">
                               {summary.map((point, index) => (
                                   <li key={index} className="mb-2">
-                                      {point.includes('bullish') || point.includes('increase') || point.includes('Golden') ? (
+                                      {point.includes('bullish') || point.includes('increase') || point.includes('Golden') || point.includes('positive') || point.includes('BULLISH') ? (
                                           <span className="text-success">{point}</span>
-                                      ) : point.includes('bearish') || point.includes('decrease') || point.includes('Death') ? (
+                                      ) : point.includes('bearish') || point.includes('decrease') || point.includes('Death') || point.includes('negative') || point.includes('BEARISH') || point.includes('overbought') ? (
                                           <span className="text-danger">{point}</span>
                                       ) : (
                                           <span className="text-warning">{point}</span>

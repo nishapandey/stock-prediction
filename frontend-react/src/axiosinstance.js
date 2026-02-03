@@ -25,27 +25,35 @@ axiosInstance.interceptors.response.use(
     (response) => response,
     async (error) => {
         const originalRequest = error.config;
-        if (error.response && error.response.status === 401 && !originalRequest.retry) {
+        
+        // Skip refresh logic for auth endpoints
+        const isAuthEndpoint = originalRequest.url?.includes('/token/');
+        
+        if (error.response && error.response.status === 401 && !originalRequest.retry && !isAuthEndpoint) {
             originalRequest.retry = true;
-                const refreshToken = localStorage.getItem('refresh_token');
-                try {
-                    // Use plain axios to avoid triggering interceptors on refresh
-                    const response = await axiosInstance.post(`/token/refresh/`, {
-                        refresh: refreshToken
-                    });
-                    
-                    localStorage.setItem('access_token', response.data.access);
-                    //localStorage.setItem('refresh_token', response.data.refresh);
+            const refreshToken = localStorage.getItem('refresh_token');
+            
+            if (!refreshToken) {
+                return Promise.reject(error);
+            }
+            
+            try {
+                // Use plain axios to avoid triggering interceptors on refresh
+                const response = await axios.post(`${API_URL}/token/refresh/`, {
+                    refresh: refreshToken
+                });
+                
+                localStorage.setItem('access_token', response.data.access);
 
-                    // Retry original request with new token
-                    originalRequest.headers.Authorization = `Bearer ${response.data.access}`;
-                    return axiosInstance(originalRequest);
-                } catch (err) {
-                    // Refresh failed - clear tokens and redirect to login
-                    localStorage.removeItem('access_token');
-                    localStorage.removeItem('refresh_token');
-                    return Promise.reject(err);
-                }
+                // Retry original request with new token
+                originalRequest.headers.Authorization = `Bearer ${response.data.access}`;
+                return axiosInstance(originalRequest);
+            } catch (err) {
+                // Refresh failed - clear tokens and redirect to login
+                localStorage.removeItem('access_token');
+                localStorage.removeItem('refresh_token');
+                return Promise.reject(err);
+            }
         }
 
         return Promise.reject(error);

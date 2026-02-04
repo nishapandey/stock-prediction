@@ -84,51 +84,101 @@ class StockPredictionAPIView(APIView):
                 plt.legend()
                 plot_200_dma = save_plot(f'{ticker}_200_dma.png')
 
-                # Train/Test split (70/30)
-                split = int(len(df) * 0.7)
-                data_training = df.iloc[:split]
-                data_testing = df.iloc[split:]
-
-                # Scaling - fit only on training data
-                scaler = MinMaxScaler(feature_range=(0, 1))
-                scaler.fit(data_training)
-
-                # Prepare test data - use last 100 days of training + all test data
-                past_100_days = data_training.tail(100)
-                final_df = pd.concat([past_100_days, data_testing], axis=0)
-                input_data = scaler.transform(final_df)
-
-                # Create test sequences
-                x_test, y_test = [], []
-                for i in range(100, input_data.shape[0]):
-                    x_test.append(input_data[i-100:i, 0])
-                    y_test.append(input_data[i, 0])
-
-                x_test = np.array(x_test).reshape(-1, 100, 1)
-                y_test = np.array(y_test)
-
+                # Use recent data for more realistic evaluation
+                # Take last 500 days (or available) for evaluation
+                eval_days = min(500, len(df) - 100)
+                eval_data = df['Close'].tail(eval_days + 100).values.reshape(-1, 1)
+                
+                # Fit scaler on evaluation window for proper scaling
+                eval_scaler = MinMaxScaler(feature_range=(0, 1))
+                eval_scaler.fit(eval_data)
+                eval_scaled = eval_scaler.transform(eval_data)
+                
+                # Create sequences for evaluation
+                x_eval, y_eval = [], []
+                for i in range(100, len(eval_scaled)):
+                    x_eval.append(eval_scaled[i-100:i, 0])
+                    y_eval.append(eval_scaled[i, 0])
+                
+                x_eval = np.array(x_eval).reshape(-1, 100, 1)
+                y_eval = np.array(y_eval)
+                
                 # Load model and make predictions
                 model = load_model('stock_prediction_model.keras')
-                y_predicted = model.predict(x_test)
-
+                y_pred_scaled = model.predict(x_eval)
+                
                 # Inverse transform to get original prices
-                y_predicted = scaler.inverse_transform(y_predicted).flatten()
-                y_test = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
-
-                # 4. Prediction plot
+                y_predicted = eval_scaler.inverse_transform(y_pred_scaled).flatten()
+                y_actual = eval_scaler.inverse_transform(y_eval.reshape(-1, 1)).flatten()
+                
+                # Also get previous day prices for baseline comparison
+                y_prev_day = eval_data[99:-1].flatten()  # Previous day as naive forecast
+                
+                # 4. Prediction plot with better visualization
                 plt.figure(figsize=(17.3, 7.2))
-                plt.plot(y_test, 'b', label='Original Price')
-                plt.plot(y_predicted, 'r', label='Predicted Price')
-                plt.title(f'Final Prediction for {ticker}')
+                plt.subplot(1, 2, 1)
+                plt.plot(y_actual, 'b', label='Actual Price', alpha=0.7)
+                plt.plot(y_predicted, 'r', label='Predicted Price', alpha=0.7)
+                plt.title(f'Price Prediction for {ticker}')
                 plt.xlabel('Days')
-                plt.ylabel('Price')
+                plt.ylabel('Price ($)')
                 plt.legend()
+                plt.grid(True, alpha=0.3)
+                
+                # Add scatter plot for correlation
+                plt.subplot(1, 2, 2)
+                plt.scatter(y_actual, y_predicted, alpha=0.5, s=10)
+                min_val = min(y_actual.min(), y_predicted.min())
+                max_val = max(y_actual.max(), y_predicted.max())
+                plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Prediction')
+                plt.xlabel('Actual Price ($)')
+                plt.ylabel('Predicted Price ($)')
+                plt.title('Actual vs Predicted Correlation')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
                 plot_prediction = save_plot(f'{ticker}_final_prediction.png')
-
-                # Model evaluation metrics
-                mse = mean_squared_error(y_test, y_predicted)
+                
+                # ============ IMPROVED MODEL EVALUATION ============
+                
+                # Basic metrics
+                mse = mean_squared_error(y_actual, y_predicted)
                 rmse = np.sqrt(mse)
-                r2 = r2_score(y_test, y_predicted)
+                mae = np.mean(np.abs(y_actual - y_predicted))
+                
+                # MAPE (Mean Absolute Percentage Error) - more interpretable
+                mape = np.mean(np.abs((y_actual - y_predicted) / y_actual)) * 100
+                
+                # R² Score
+                r2 = r2_score(y_actual, y_predicted)
+                
+                # Directional Accuracy - did we predict the right direction?
+                actual_direction = np.diff(y_actual) > 0  # True if price went up
+                pred_direction = (y_predicted[1:] - y_actual[:-1]) > 0  # Did we predict up?
+                directional_accuracy = np.mean(actual_direction == pred_direction) * 100
+                
+                # Baseline comparison (Naive forecast: tomorrow = today)
+                baseline_mse = mean_squared_error(y_actual, y_prev_day)
+                baseline_rmse = np.sqrt(baseline_mse)
+                baseline_mape = np.mean(np.abs((y_actual - y_prev_day) / y_actual)) * 100
+                
+                # Model Skill Score (how much better than baseline)
+                # skill_score > 0 means model is better than naive forecast
+                skill_score = 1 - (mse / baseline_mse) if baseline_mse > 0 else 0
+                
+                # Compile evaluation results
+                evaluation = {
+                    'mse': round(mse, 2),
+                    'rmse': round(rmse, 2),
+                    'mae': round(mae, 2),
+                    'mape': round(mape, 2),
+                    'r2': round(r2, 4),
+                    'directional_accuracy': round(directional_accuracy, 1),
+                    'baseline_rmse': round(baseline_rmse, 2),
+                    'baseline_mape': round(baseline_mape, 2),
+                    'skill_score': round(skill_score, 4),
+                    'eval_period_days': eval_days
+                }
 
                 # Get today's closing price for comparison
                 today_price = df['Close'].iloc[-1]
@@ -158,50 +208,67 @@ class StockPredictionAPIView(APIView):
                 # Calculate base price change predicted by LSTM
                 base_change_pct = ((base_prediction - today_price) / today_price) * 100
                 
-                # Check for contradiction: LSTM vs Sentiment
-                # If sentiment strongly contradicts LSTM prediction, apply correction
-                sentiment_adjustment = 0.0
+                # Sentiment-aware prediction adjustment
+                # Key principle: If LSTM predicts big move but sentiment disagrees, we should be cautious
                 
-                # Strong contradiction detection
                 lstm_bullish = base_change_pct > 2  # LSTM predicts >2% increase
                 lstm_bearish = base_change_pct < -2  # LSTM predicts >2% decrease
-                sentiment_bullish = overall_sentiment == 'bullish' and sentiment_score > 0.2
-                sentiment_bearish = overall_sentiment == 'bearish' and sentiment_score < -0.2
+                is_bearish = overall_sentiment == 'bearish' or sentiment_score < -0.1
+                is_bullish = overall_sentiment == 'bullish' or sentiment_score > 0.1
                 
-                if lstm_bullish and sentiment_bearish:
-                    # LSTM says up, but sentiment is bearish - dampen the prediction
-                    # The more bearish, the more we reduce the predicted gain
-                    dampening_factor = 0.3 + (0.7 * (1 + sentiment_score))  # 0.3 to 1.0
-                    adjusted_change = base_change_pct * dampening_factor
-                    tomorrow_prediction = today_price * (1 + adjusted_change / 100)
-                    sentiment_adjustment = (adjusted_change - base_change_pct) / 100
+                if lstm_bullish and is_bearish:
+                    # CONTRADICTION: LSTM says big up, but sentiment is bearish
+                    # Significantly reduce the predicted gain
+                    # For bearish sentiment, cap the upside and potentially reverse to slight decline
                     
-                elif lstm_bearish and sentiment_bullish:
-                    # LSTM says down, but sentiment is bullish - dampen the decline
-                    dampening_factor = 0.3 + (0.7 * (1 - sentiment_score))  # 0.3 to 1.0
-                    adjusted_change = base_change_pct * dampening_factor
+                    # Map sentiment_score from [-1, 0] to dampening [0.1, 0.5]
+                    # More negative sentiment = more dampening
+                    dampening = max(0.1, 0.5 + sentiment_score * 0.4)  # Range: 0.1 to 0.5
+                    
+                    # If very bearish (score < -0.3), consider predicting slight decline
+                    if sentiment_score < -0.3:
+                        # Flip to slight negative
+                        adjusted_change = -abs(base_change_pct) * 0.1  # Small decline
+                    else:
+                        # Just dampen the gain significantly
+                        adjusted_change = base_change_pct * dampening
+                    
                     tomorrow_prediction = today_price * (1 + adjusted_change / 100)
-                    sentiment_adjustment = (adjusted_change - base_change_pct) / 100
+                    
+                elif lstm_bearish and is_bullish:
+                    # CONTRADICTION: LSTM says big down, but sentiment is bullish
+                    # Reduce the predicted decline
+                    
+                    dampening = max(0.1, 0.5 - sentiment_score * 0.4)  # Range: 0.1 to 0.5
+                    
+                    if sentiment_score > 0.3:
+                        # Flip to slight positive
+                        adjusted_change = abs(base_change_pct) * 0.1
+                    else:
+                        adjusted_change = base_change_pct * dampening
+                    
+                    tomorrow_prediction = today_price * (1 + adjusted_change / 100)
+                    
+                elif abs(base_change_pct) > 5:
+                    # LSTM predicts large move (>5%) - be conservative regardless of sentiment
+                    # Large predictions are often unreliable
+                    conservative_factor = 0.3  # Cap at 30% of predicted move
+                    adjusted_change = base_change_pct * conservative_factor
+                    tomorrow_prediction = today_price * (1 + adjusted_change / 100)
                     
                 else:
-                    # No strong contradiction - apply normal sentiment adjustment
+                    # Normal case - LSTM and sentiment roughly agree or small prediction
+                    # Apply sentiment-based fine-tuning
+                    sentiment_adjustment = sentiment_score * 0.02  # ±2% max from sentiment
+                    
                     # RSI contribution
                     rsi = sentiment_data.get('rsi')
                     if rsi is not None:
-                        if rsi > 70:  # Overbought
-                            sentiment_adjustment -= 0.02 * ((rsi - 70) / 30)
-                        elif rsi < 30:  # Oversold
-                            sentiment_adjustment += 0.02 * ((30 - rsi) / 30)
+                        if rsi > 70:
+                            sentiment_adjustment -= 0.01 * ((rsi - 70) / 30)
+                        elif rsi < 30:
+                            sentiment_adjustment += 0.01 * ((30 - rsi) / 30)
                     
-                    # News sentiment contribution
-                    news_score = sentiment_data.get('news_sentiment')
-                    if news_score is not None:
-                        sentiment_adjustment += news_score * 0.02
-                    
-                    # Overall sentiment contribution
-                    sentiment_adjustment += sentiment_score * 0.03
-                    
-                    # Apply adjustment
                     tomorrow_prediction = base_prediction * (1 + sentiment_adjustment)
                 
                 # Store adjustment info for transparency
@@ -248,18 +315,20 @@ class StockPredictionAPIView(APIView):
                     summary_points.append("Death Cross pattern: 100 DMA is below 200 DMA, typically bearish.")
                 
                 # 6. Sentiment-adjusted prediction explanation
-                lstm_bullish = base_change_pct > 2
-                lstm_bearish = base_change_pct < -2
-                sentiment_bullish = overall_sentiment == 'bullish' and sentiment_score > 0.2
-                sentiment_bearish = overall_sentiment == 'bearish' and sentiment_score < -0.2
+                final_change_pct = ((tomorrow_prediction - today_price) / today_price) * 100
                 
-                if lstm_bullish and sentiment_bearish:
-                    summary_points.append(f"⚠️ CONFLICT: LSTM predicted +{base_change_pct:.1f}% but sentiment is BEARISH. Prediction dampened to reflect market caution.")
-                elif lstm_bearish and sentiment_bullish:
-                    summary_points.append(f"⚠️ CONFLICT: LSTM predicted {base_change_pct:.1f}% but sentiment is BULLISH. Decline dampened due to positive sentiment.")
+                if lstm_bullish and is_bearish:
+                    summary_points.append(f"⚠️ CONFLICT: LSTM predicted +{base_change_pct:.1f}% but sentiment is BEARISH (score: {sentiment_score:.2f}).")
+                    summary_points.append(f"Prediction adjusted from ${base_prediction:.2f} to ${tomorrow_prediction:.2f} ({final_change_pct:+.1f}%).")
+                elif lstm_bearish and is_bullish:
+                    summary_points.append(f"⚠️ CONFLICT: LSTM predicted {base_change_pct:.1f}% but sentiment is BULLISH (score: {sentiment_score:.2f}).")
+                    summary_points.append(f"Prediction adjusted from ${base_prediction:.2f} to ${tomorrow_prediction:.2f} ({final_change_pct:+.1f}%).")
+                elif abs(base_change_pct) > 5:
+                    summary_points.append(f"⚠️ LSTM predicted large move ({base_change_pct:+.1f}%) - applying conservative cap.")
+                    summary_points.append(f"Prediction adjusted from ${base_prediction:.2f} to ${tomorrow_prediction:.2f} ({final_change_pct:+.1f}%).")
                 elif abs(adjustment_pct) > 0.1:
                     direction = "increased" if adjustment_pct > 0 else "decreased"
-                    summary_points.append(f"Sentiment analysis {direction} the base prediction by {abs(adjustment_pct):.2f}% (${base_prediction:.2f} → ${tomorrow_prediction:.2f}).")
+                    summary_points.append(f"Sentiment fine-tuned the prediction by {adjustment_pct:+.2f}%.")
                 
                 # Add sentiment insights to summary
                 if sentiment_data['rsi'] is not None:
@@ -304,9 +373,7 @@ class StockPredictionAPIView(APIView):
                     'plot_100_dma': plot_100_dma,
                     'plot_200_dma': plot_200_dma,
                     'plot_prediction': plot_prediction,
-                    'mse': round(mse, 4),
-                    'rmse': round(rmse, 4),
-                    'r2': round(r2, 4),
+                    'evaluation': evaluation,
                     'tomorrow_prediction': round(float(tomorrow_prediction), 2),
                     'base_prediction': round(float(base_prediction), 2),
                     'sentiment_adjustment_pct': round(adjustment_pct, 2),

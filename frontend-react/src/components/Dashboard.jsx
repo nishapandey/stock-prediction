@@ -25,9 +25,7 @@ import { faSpinner } from '@fortawesome/free-solid-svg-icons'
   const [ma100, setMA100] = useState()
   const [ma200, setMA200] = useState()
   const [prediction, setPrediction] = useState()
-  const [mse, setMSE] = useState()
-  const [rmse, setRMSE] = useState()
-  const [r2, setR2] = useState()
+  const [evaluation, setEvaluation] = useState(null)
   const [tomorrowPrice, setTomorrowPrice] = useState()
   const [basePrediction, setBasePrediction] = useState()
   const [sentimentAdjustment, setSentimentAdjustment] = useState(0)
@@ -59,9 +57,7 @@ import { faSpinner } from '@fortawesome/free-solid-svg-icons'
           setMA100(response.data.plot_100_dma)
           setMA200(response.data.plot_200_dma)
           setPrediction(response.data.plot_prediction)
-          setMSE(response.data.mse)
-          setRMSE(response.data.rmse)
-          setR2(response.data.r2)
+          setEvaluation(response.data.evaluation)
           setTomorrowPrice(response.data.tomorrow_prediction)
           setBasePrediction(response.data.base_prediction)
           setSentimentAdjustment(response.data.sentiment_adjustment_pct || 0)
@@ -286,12 +282,106 @@ return (
                   )}
               </div>
 
-              <div className="text-light p-3">
-                  <h4>Model Evalulation</h4>
-                  <p>Mean Squared Error (MSE): {mse}</p>
-                  <p>Root Mean Squared Error (RMSE): {rmse}</p>
-                  <p>R-Squared: {r2}</p>
-              </div>
+              {/* Model Evaluation Section */}
+              {evaluation && (
+                  <div className="card bg-dark text-light p-3 mt-4">
+                      <h4 className="mb-4">Model Evaluation</h4>
+                      
+                      {/* Key Metrics Row */}
+                      <div className="row mb-4">
+                          <div className="col-md-3 text-center mb-3">
+                              <div className="card bg-secondary p-3">
+                                  <h6 className="text-muted">MAPE</h6>
+                                  <h3 className={evaluation.mape < 5 ? 'text-success' : evaluation.mape < 10 ? 'text-warning' : 'text-danger'}>
+                                      {evaluation.mape}%
+                                  </h3>
+                                  <small>Mean Absolute % Error</small>
+                              </div>
+                          </div>
+                          <div className="col-md-3 text-center mb-3">
+                              <div className="card bg-secondary p-3">
+                                  <h6 className="text-muted">Direction Accuracy</h6>
+                                  <h3 className={evaluation.directional_accuracy > 55 ? 'text-success' : evaluation.directional_accuracy > 50 ? 'text-warning' : 'text-danger'}>
+                                      {evaluation.directional_accuracy}%
+                                  </h3>
+                                  <small>Correct Up/Down Prediction</small>
+                              </div>
+                          </div>
+                          <div className="col-md-3 text-center mb-3">
+                              <div className="card bg-secondary p-3">
+                                  <h6 className="text-muted">Skill Score</h6>
+                                  <h3 className={evaluation.skill_score > 0 ? 'text-success' : 'text-danger'}>
+                                      {evaluation.skill_score > 0 ? '+' : ''}{(evaluation.skill_score * 100).toFixed(1)}%
+                                  </h3>
+                                  <small>vs Naive Baseline</small>
+                              </div>
+                          </div>
+                          <div className="col-md-3 text-center mb-3">
+                              <div className="card bg-secondary p-3">
+                                  <h6 className="text-muted">R² Score</h6>
+                                  <h3 className={evaluation.r2 > 0.5 ? 'text-success' : evaluation.r2 > 0 ? 'text-warning' : 'text-danger'}>
+                                      {evaluation.r2}
+                                  </h3>
+                                  <small>Variance Explained</small>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      {/* Detailed Metrics */}
+                      <div className="row">
+                          <div className="col-md-6">
+                              <h6 className="border-bottom pb-2 mb-3">Model Performance</h6>
+                              <table className="table table-dark table-sm">
+                                  <tbody>
+                                      <tr>
+                                          <td>Root Mean Squared Error (RMSE)</td>
+                                          <td className="text-end">${evaluation.rmse}</td>
+                                      </tr>
+                                      <tr>
+                                          <td>Mean Absolute Error (MAE)</td>
+                                          <td className="text-end">${evaluation.mae}</td>
+                                      </tr>
+                                      <tr>
+                                          <td>Mean Squared Error (MSE)</td>
+                                          <td className="text-end">{evaluation.mse}</td>
+                                      </tr>
+                                  </tbody>
+                              </table>
+                          </div>
+                          <div className="col-md-6">
+                              <h6 className="border-bottom pb-2 mb-3">Baseline Comparison (Naive Forecast)</h6>
+                              <table className="table table-dark table-sm">
+                                  <tbody>
+                                      <tr>
+                                          <td>Baseline RMSE</td>
+                                          <td className="text-end">${evaluation.baseline_rmse}</td>
+                                      </tr>
+                                      <tr>
+                                          <td>Baseline MAPE</td>
+                                          <td className="text-end">{evaluation.baseline_mape}%</td>
+                                      </tr>
+                                      <tr>
+                                          <td>Evaluation Period</td>
+                                          <td className="text-end">{evaluation.eval_period_days} days</td>
+                                      </tr>
+                                  </tbody>
+                              </table>
+                          </div>
+                      </div>
+                      
+                      {/* Interpretation */}
+                      <div className="alert alert-secondary mt-3 mb-0">
+                          <strong>Interpretation:</strong>
+                          {evaluation.skill_score > 0 ? (
+                              <span className="text-success"> Model outperforms naive baseline by {(evaluation.skill_score * 100).toFixed(1)}%.</span>
+                          ) : (
+                              <span className="text-warning"> Model performs similarly to naive baseline (predicting yesterday's price).</span>
+                          )}
+                          {' '}Directional accuracy of {evaluation.directional_accuracy}% means the model correctly predicts 
+                          price direction {evaluation.directional_accuracy > 50 ? 'better than random chance' : 'at random chance level'}.
+                      </div>
+                  </div>
+              )}
 
           </div>
           )}
